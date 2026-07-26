@@ -58,7 +58,7 @@ export const MODEL_MAP: Record<string, [string, string]> = {
   "pplx-gpt": ["copilot", "gpt55"],
   "pplx-gemini": ["copilot", "gemini31pro_high"],
   "pplx-sonnet": ["copilot", "claude50sonnet"],
-  "pplx-opus": ["copilot", "claude48opus"],
+  "pplx-opus": ["copilot", "claude50opus"],
   "pplx-glm": ["copilot", "glm_5_2"],
   "pplx-kimi": ["copilot", "kimik26instant"],
   "pplx-nemotron": ["copilot", "nv_nemotron_3_ultra"],
@@ -68,7 +68,7 @@ export const THINKING_MAP: Record<string, string> = {
   "pplx-gpt-5.4": "gpt54_thinking",
   "pplx-gpt": "gpt55_thinking",
   "pplx-sonnet": "claude50sonnetthinking",
-  "pplx-opus": "claude48opusthinking",
+  "pplx-opus": "claude50opusthinking",
   "pplx-kimi": "kimik26thinking",
 };
 
