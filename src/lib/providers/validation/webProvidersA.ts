@@ -614,7 +614,16 @@ export async function validatePerplexityWebProvider({ apiKey, providerSpecificDa
         ...(bearerToken
           ? { Authorization: `Bearer ${bearerToken}` }
           : sessionToken
-            ? { Cookie: `__Secure-next-auth.session-token=${sessionToken}` }
+            ? {
+                // Same normalizer the executor uses, so the validator's verdict is
+                // about the credential the executor will actually send. Concatenating
+                // by hand mangled the full DevTools cookie line into
+                // `__Secure-next-auth.session-token=cf_clearance=…`.
+                Cookie: normalizeSessionCookieHeader(
+                  sessionToken,
+                  "__Secure-next-auth.session-token"
+                ),
+              }
             : {}),
       },
       providerSpecificData
@@ -681,6 +690,20 @@ export async function validatePerplexityWebProvider({ apiKey, providerSpecificDa
       };
     }
 
+    // HTTP 200 alone does not prove the cookie authenticated. Perplexity answers
+    // anonymous callers with 200 + a GENERIC_FAILED_RESPONSE SSE frame carrying
+    // `"subscription_tier": null`, so a cookie blob with no session token in it was
+    // reported as a healthy connection. A logged-in free account is not caught by
+    // this: it either answers normally or reports FREE_TIER_RATE_LIMITED.
+    if (response.status === 200 && isAnonymousPerplexitySession(response.text)) {
+      return {
+        valid: false,
+        error:
+          "Perplexity did not recognize this session — the pasted cookie carries no " +
+          "__Secure-next-auth.session-token. Re-copy it from a logged-in perplexity.ai tab.",
+      };
+    }
+
     if (response.status === 200 || (response.status >= 400 && response.status < 500)) {
       return { valid: true, error: null };
     }
@@ -693,6 +716,20 @@ export async function validatePerplexityWebProvider({ apiKey, providerSpecificDa
   } catch (error: any) {
     return toValidationErrorResult(error);
   }
+}
+
+/**
+ * True when Perplexity handled the probe as a signed-out visitor: it answers 200
+ * with `{"error_code": "GENERIC_FAILED_RESPONSE", …, "subscription_tier": null}`.
+ * Both markers are required so a real (signed-in) account is never failed on one
+ * of them alone.
+ */
+export function isAnonymousPerplexitySession(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return (
+    /"error_code":\s*"GENERIC_FAILED_RESPONSE"/.test(text) &&
+    /"subscription_tier":\s*null/.test(text)
+  );
 }
 
 export async function validateBlackboxWebProvider({ apiKey, providerSpecificData = {} }: any) {

@@ -45,17 +45,23 @@ export const PPLX_SUPPORTED_BLOCK_USE_CASES = [
 export const PPLX_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:148.0) Gecko/20100101 Firefox/148.0";
 
+// `mode` must be one that accepts an explicit `model_preference`. Perplexity's
+// basic `search` mode only serves its own default model: pairing it with a named
+// premium preference (claude48opus, pplx_pro, …) is answered with HTTP 200 and a
+// single `{"text":"Error in processing query.","status":"FAILED"}` SSE frame, no
+// content blocks — which surfaces downstream as a bare 502. `copilot` (Pro Search)
+// and `concise` both honor `model_preference` and echo it back as `display_model`.
 export const MODEL_MAP: Record<string, [string, string]> = {
-  "pplx-auto": ["search", "pplx_pro"],
-  "pplx-sonar": ["search", "experimental"],
-  "pplx-gpt-5.4": ["search", "gpt54"],
-  "pplx-gpt": ["search", "gpt55"],
-  "pplx-gemini": ["search", "gemini31pro_high"],
-  "pplx-sonnet": ["search", "claude50sonnet"],
-  "pplx-opus": ["search", "claude48opus"],
-  "pplx-glm": ["search", "glm_5_2"],
-  "pplx-kimi": ["search", "kimik26instant"],
-  "pplx-nemotron": ["search", "nv_nemotron_3_ultra"],
+  "pplx-auto": ["concise", "pplx_pro"],
+  "pplx-sonar": ["copilot", "experimental"],
+  "pplx-gpt-5.4": ["copilot", "gpt54"],
+  "pplx-gpt": ["copilot", "gpt55"],
+  "pplx-gemini": ["copilot", "gemini31pro_high"],
+  "pplx-sonnet": ["copilot", "claude50sonnet"],
+  "pplx-opus": ["copilot", "claude48opus"],
+  "pplx-glm": ["copilot", "glm_5_2"],
+  "pplx-kimi": ["copilot", "kimik26instant"],
+  "pplx-nemotron": ["copilot", "nv_nemotron_3_ultra"],
 };
 
 export const THINKING_MAP: Record<string, string> = {
@@ -390,6 +396,19 @@ export async function* extractContent(
     if (event.error_code || event.error_message) {
       yield {
         error: event.error_message || `Perplexity error: ${event.error_code}`,
+        done: true,
+      };
+      return;
+    }
+
+    // A terminal FAILED frame carries Perplexity's own reason in `text` and no
+    // error_code. Without this it fell through silently: the frame ships a
+    // `pending_followups` block, so `blocks.length !== 0` disqualified the legacy
+    // `text` fallback below, the stream ended with an empty answer, and the caller
+    // saw a bare "empty response" 502 instead of the upstream reason.
+    if (event.status === "FAILED") {
+      yield {
+        error: event.text?.trim() || "Perplexity failed to process the query",
         done: true,
       };
       return;

@@ -16,6 +16,7 @@ import {
 import { prepareToolMessages } from "../translator/webTools.ts";
 import { buildToolModeResponse } from "./chatgptWebTools.ts";
 import { sanitizeErrorMessage } from "../utils/error.ts";
+import { normalizeSessionCookieHeader } from "@/lib/providers/webCookieAuth";
 import {
   PPLX_SSE_ENDPOINT,
   PPLX_USER_AGENT,
@@ -346,7 +347,8 @@ export class PerplexityWebExecutor extends BaseExecutor {
     let pplxMode: string;
     let modelPref: string;
     if (thinking && THINKING_MAP[model]) {
-      pplxMode = "search";
+      // Thinking variants are premium preferences — same constraint as MODEL_MAP.
+      pplxMode = "copilot";
       modelPref = THINKING_MAP[model];
       log?.info?.("PPLX-WEB", `Thinking mode → ${model} using ${modelPref}`);
     } else if (MODEL_MAP[model]) {
@@ -403,7 +405,14 @@ export class PerplexityWebExecutor extends BaseExecutor {
     if (credentials.accessToken) {
       headers["Authorization"] = `Bearer ${credentials.accessToken}`;
     } else if (credentials.apiKey) {
-      headers["Cookie"] = `__Secure-next-auth.session-token=${credentials.apiKey}`;
+      // Share the one cookie normalizer every other web-cookie executor uses.
+      // Hand-concatenating broke the documented "paste the full DevTools cookie
+      // line" form: it turned the blob's first pair (typically `cf_clearance`)
+      // into the session-token's value and dropped that clearance cookie.
+      headers["Cookie"] = normalizeSessionCookieHeader(
+        credentials.apiKey,
+        "__Secure-next-auth.session-token"
+      );
     }
 
     log?.info?.(

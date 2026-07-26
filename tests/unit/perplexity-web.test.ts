@@ -798,7 +798,9 @@ test("Model mapping: pplx-gpt sends current GPT-5.5 internal preference", async 
     });
 
     assert.equal(capturedBody.params.model_preference, "gpt55");
-    assert.equal(capturedBody.params.mode, "search");
+    // Not "search": that mode only serves Perplexity's default model and answers a
+    // named premium preference with a FAILED frame and no content.
+    assert.equal(capturedBody.params.mode, "copilot");
   } finally {
     globalThis.fetch = original;
   }
@@ -841,7 +843,7 @@ test("Model mapping: thinking mode uses thinking variant", async () => {
     });
 
     assert.equal(capturedBody.params.model_preference, "claude50sonnetthinking");
-    assert.equal(capturedBody.params.mode, "search");
+    assert.equal(capturedBody.params.mode, "copilot");
   } finally {
     globalThis.fetch = original;
   }
@@ -995,4 +997,61 @@ test("Error: TlsClientUnavailableError returns 502 with install hint", async () 
   } finally {
     restore();
   }
+});
+
+// ─── Regression: mode must accept an explicit model_preference ──────────────
+// Perplexity's basic `search` mode only serves its own default model. Paired with
+// a named preference it answers HTTP 200 + a lone {"status":"FAILED"} frame, which
+// reached callers as a bare 502. Shipped in v3.8.44 and unnoticed because the two
+// mode assertions above were updated to match the break instead of catching it.
+
+test("Model mapping: no model is routed through the `search` mode", async () => {
+  const { MODEL_MAP, THINKING_MAP } =
+    await import("../../open-sse/executors/perplexity-web/protocol.ts");
+
+  for (const [model, [mode, preference]] of Object.entries(MODEL_MAP)) {
+    assert.notEqual(
+      mode,
+      "search",
+      `${model} → mode "search" with model_preference "${preference}" is rejected upstream`
+    );
+    assert.ok(
+      ["concise", "copilot"].includes(mode),
+      `${model} → unknown mode "${mode}"; only concise/copilot honor model_preference`
+    );
+  }
+
+  // Every thinking variant must have a MODEL_MAP entry, since the thinking branch
+  // reuses that model's mode.
+  for (const model of Object.keys(THINKING_MAP)) {
+    assert.ok(MODEL_MAP[model], `${model} is in THINKING_MAP but not MODEL_MAP`);
+  }
+});
+
+test("extractContent surfaces a FAILED frame's own reason", async () => {
+  const { extractContent } = await import("../../open-sse/executors/perplexity-web/protocol.ts");
+
+  // Verbatim shape of a rejected query: no error_code, and a pending_followups
+  // block — which used to disqualify the legacy `text` fallback, so the reason
+  // was dropped and the answer came back empty.
+  const frame = JSON.stringify({
+    backend_uuid: "0c2fd834",
+    text: "Error in processing query.",
+    blocks: [{ intended_usage: "pending_followups", pending_followups_block: { followups: [] } }],
+    status: "FAILED",
+    final_sse_message: true,
+  });
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(`event: message\ndata: ${frame}\n\n`));
+      controller.close();
+    },
+  });
+
+  const chunks = [];
+  for await (const chunk of extractContent(stream, null)) chunks.push(chunk);
+
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0].error, "Error in processing query.");
+  assert.equal(chunks[0].done, true);
 });
